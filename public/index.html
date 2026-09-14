@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>WorkPilot — Give AI the job, not the prompt.</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top, #1c2738 0, #0b1018 42%, #06090e 100%);
+      color: #f7f9fc;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 48px 0 72px;
+    }
+
+    .eyebrow {
+      color: #7dd3fc;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(40px, 7vw, 72px);
+      line-height: .96;
+      letter-spacing: -.055em;
+    }
+
+    .tagline {
+      color: #b8c2d1;
+      font-size: 19px;
+      line-height: 1.5;
+      max-width: 760px;
+      margin: 18px 0 30px;
+    }
+
+    .panel {
+      border: 1px solid #263243;
+      background: rgba(10, 15, 24, .9);
+      border-radius: 22px;
+      overflow: hidden;
+      box-shadow: 0 24px 80px rgba(0,0,0,.28);
+    }
+
+    .panel-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid #202a38;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: #b8c2d1;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #64748b;
+    }
+
+    .dot.active {
+      background: #fbbf24;
+      box-shadow: 0 0 18px rgba(251,191,36,.55);
+    }
+
+    .dot.success {
+      background: #34d399;
+      box-shadow: 0 0 18px rgba(52,211,153,.45);
+    }
+
+    .dot.error {
+      background: #fb7185;
+    }
+
+    button {
+      font: inherit;
+      font-weight: 800;
+      border: 0;
+      border-radius: 11px;
+      cursor: pointer;
+    }
+
+    .launch {
+      padding: 12px 18px;
+      background: #f8fafc;
+      color: #070b11;
+    }
+
+    .launch:disabled {
+      opacity: .45;
+      cursor: default;
+    }
+
+    .content {
+      padding: 24px;
+    }
+
+    .workflow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+
+    .stage {
+      min-height: 90px;
+      padding: 15px;
+      border: 1px solid #253043;
+      border-radius: 15px;
+      background: #0c131f;
+    }
+
+    .stage-number {
+      color: #7d8ca1;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .1em;
+    }
+
+    .stage-name {
+      margin-top: 9px;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .stage.active {
+      border-color: #fbbf24;
+      box-shadow:
+        inset 0 0 0 1px rgba(251,191,36,.2),
+        0 0 30px rgba(251,191,36,.08);
+    }
+
+    .stage.done {
+      border-color: #2b725e;
+      background: #0b1715;
+    }
+
+    .stage.done .stage-name {
+      color: #6ee7b7;
+    }
+
+    .approval {
+      display: none;
+      padding: 22px;
+      margin-bottom: 24px;
+      border: 1px solid #7c5a16;
+      border-radius: 18px;
+      background: linear-gradient(
+        135deg,
+        rgba(74,53,12,.62),
+        rgba(18,16,10,.95)
+      );
+    }
+
+    .approval.visible {
+      display: block;
+    }
+
+    .approval h2 {
+      margin: 0 0 8px;
+      font-size: 22px;
+    }
+
+    .approval-copy {
+      color: #d5dae2;
+      line-height: 1.55;
+      margin-bottom: 18px;
+    }
+
+    .approval-context {
+      max-height: 250px;
+      overflow: auto;
+      white-space: pre-wrap;
+      padding: 15px;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 13px;
+      background: rgba(0,0,0,.2);
+      color: #cbd5e1;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .approve {
+      padding: 12px 17px;
+      background: #34d399;
+      color: #06110d;
+    }
+
+    .reject {
+      padding: 12px 17px;
+      background: #1f2937;
+      color: #f8fafc;
+    }
+
+    .report {
+      display: none;
+    }
+
+    .report.visible {
+      display: block;
+    }
+
+    .report h2 {
+      margin: 0 0 4px;
+      font-size: 24px;
+    }
+
+    .report-sub {
+      color: #8e9bad;
+      margin-bottom: 14px;
+      font-size: 14px;
+    }
+
+    .report-body {
+      max-height: 620px;
+      overflow: auto;
+      padding: 20px;
+      white-space: pre-wrap;
+      background: #080d15;
+      border: 1px solid #1e2938;
+      border-radius: 16px;
+      color: #d8dee8;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .quality {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-top: 14px;
+      padding: 17px;
+      border: 1px solid #275643;
+      border-radius: 14px;
+      background: #091813;
+    }
+
+    .quality.visible {
+      display: flex;
+    }
+
+    .quality-small {
+      color: #adc3bb;
+      font-size: 13px;
+    }
+
+    .score {
+      color: #6ee7b7;
+      font-size: 26px;
+      font-weight: 900;
+    }
+
+    .error {
+      display: none;
+      margin-top: 18px;
+      padding: 16px;
+      border: 1px solid #6b2534;
+      border-radius: 14px;
+      background: #180b10;
+      color: #fecdd3;
+      white-space: pre-wrap;
+    }
+
+    .error.visible {
+      display: block;
+    }
+
+    @media (max-width: 900px) {
+      .workflow {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 600px) {
+      .shell {
+        width: min(100% - 20px, 1180px);
+        padding-top: 28px;
+      }
+
+      .content,
+      .panel-header {
+        padding: 17px;
+      }
+
+      .workflow {
+        grid-template-columns: 1fr;
+      }
+
+      .panel-header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main class="shell">
+    <div class="eyebrow">Professional AI Agent</div>
+
+    <h1>Give AI the job,<br>not the prompt.</h1>
+
+    <p class="tagline">
+      WorkPilot plans, researches, analyses, asks for human approval
+      when the evidence is uncertain, and produces a decision-ready result.
+    </p>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div class="status">
+          <span id="dot" class="dot"></span>
+          <span id="statusText">Ready to run</span>
+        </div>
+
+        <button id="launch" class="launch" onclick="startJob()">
+          Run WorkPilot
+        </button>
+      </div>
+
+      <div class="content">
+        <div class="workflow">
+          <div id="stage-scope" class="stage">
+            <div class="stage-number">01</div>
+            <div class="stage-name">Scope</div>
+          </div>
+
+          <div id="stage-research" class="stage">
+            <div class="stage-number">02</div>
+            <div class="stage-name">Research</div>
+          </div>
+
+          <div id="stage-analysis" class="stage">
+            <div class="stage-number">03</div>
+            <div class="stage-name">Analysis</div>
+          </div>
+
+          <div id="stage-approval" class="stage">
+            <div class="stage-number">04</div>
+            <div class="stage-name">Human approval</div>
+          </div>
+
+          <div id="stage-final" class="stage">
+            <div class="stage-number">05</div>
+            <div class="stage-name">Synthesis + quality</div>
+          </div>
+        </div>
+
+        <section id="approval" class="approval">
+          <h2>Human approval required</h2>
+
+          <div class="approval-copy">
+            WorkPilot found uncertainty in the research.
+            Review the evidence before allowing it to turn
+            the analysis into the final recommendation.
+          </div>
+
+          <div id="approvalContext" class="approval-context"></div>
+
+          <div class="actions">
+            <button class="approve" onclick="resolveApproval(true)">
+              Approve & continue
+            </button>
+
+            <button class="reject" onclick="resolveApproval(false)">
+              Reject & stop
+            </button>
+          </div>
+        </section>
+
+        <section id="report" class="report">
+          <h2>Decision-ready result</h2>
+
+          <div class="report-sub">
+            WorkPilot completed the approved workflow.
+          </div>
+
+          <div id="reportBody" class="report-body"></div>
+
+          <div id="quality" class="quality">
+            <div>
+              <div class="quality-small">
+                WorkPilot quality check
+              </div>
+
+              <strong>All required report checks passed.</strong>
+            </div>
+
+            <div id="qualityScore" class="score">0/100</div>
+          </div>
+        </section>
+
+        <div id="error" class="error"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    let timer = null
+
+    const stages = [
+      'stage-scope',
+      'stage-research',
+      'stage-analysis',
+      'stage-approval',
+      'stage-final',
+    ]
+
+    function setStatus(text, mode) {
+      document.getElementById('statusText').textContent = text
+
+      const dot = document.getElementById('dot')
+      dot.className = 'dot'
+
+      if (mode === 'active') dot.classList.add('active')
+      if (mode === 'success') dot.classList.add('success')
+      if (mode === 'error') dot.classList.add('error')
+    }
+
+    function resetStages() {
+      for (const id of stages) {
+        document
+          .getElementById(id)
+          .classList.remove('active', 'done')
+      }
+    }
+
+    function activateStage(index) {
+      resetStages()
+
+      for (let i = 0; i < index; i += 1) {
+        document
+          .getElementById(stages[i])
+          .classList.add('done')
+      }
+
+      document
+        .getElementById(stages[index])
+        .classList.add('active')
+    }
+
+    async function startJob() {
+      document.getElementById('launch').disabled = true
+
+      document
+        .getElementById('approval')
+        .classList.remove('visible')
+
+      document
+        .getElementById('report')
+        .classList.remove('visible')
+
+      document
+        .getElementById('quality')
+        .classList.remove('visible')
+
+      document
+        .getElementById('error')
+        .classList.remove('visible')
+
+      activateStage(0)
+      setStatus('WorkPilot is running…', 'active')
+
+      try {
+        const response = await fetch('/api/start', {
+          method: 'POST',
+        })
+
+        const data = await response.json()
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || 'Failed to start WorkPilot.',
+          )
+        }
+
+        beginPolling()
+      } catch (error) {
+        showError(error)
+      }
+    }
+
+    function beginPolling() {
+      clearInterval(timer)
+      timer = setInterval(refreshStatus, 1000)
+      refreshStatus()
+    }
+
+    async function refreshStatus() {
+      try {
+        const response = await fetch('/api/status', {
+          cache: 'no-store',
+        })
+
+        const data = await response.json()
+
+        if (data.status === 'running') {
+          activateStage(data.approval ? 4 : 2)
+          setStatus(
+            data.approval
+              ? 'Approved — continuing…'
+              : 'WorkPilot is analysing evidence…',
+            'active',
+          )
+        }
+
+        if (data.status === 'waiting_for_approval') {
+          activateStage(3)
+          setStatus(
+            'Waiting for human approval',
+            'active',
+          )
+
+          document
+            .getElementById('approval')
+            .classList.add('visible')
+
+          document.getElementById(
+            'approvalContext',
+          ).textContent =
+            data.approval?.context ||
+            'Approval context unavailable.'
+        }
+
+        if (data.status === 'completed') {
+          clearInterval(timer)
+
+          for (const id of stages) {
+            document
+              .getElementById(id)
+              .classList.remove('active')
+
+            document
+              .getElementById(id)
+              .classList.add('done')
+          }
+
+          setStatus(
+            'Completed successfully',
+            'success',
+          )
+
+          document
+            .getElementById('report')
+            .classList.add('visible')
+
+          document.getElementById(
+            'reportBody',
+          ).textContent =
+            data.finalReport ||
+            'No final report returned.'
+
+          document
+            .getElementById('quality')
+            .classList.add('visible')
+
+          document.getElementById(
+            'qualityScore',
+          ).textContent =
+            `${data.quality?.score ?? 0}/100`
+
+          document
+            .getElementById('launch')
+            .removeAttribute('disabled')
+        }
+
+        if (data.status === 'failed') {
+          clearInterval(timer)
+
+          setStatus(
+            'Workflow stopped',
+            'error',
+          )
+
+          showError(
+            data.error ||
+            'WorkPilot reported an error.',
+          )
+        }
+      } catch (error) {
+        showError(error)
+      }
+    }
+
+    async function resolveApproval(approved) {
+      try {
+        const endpoint = approved
+          ? '/api/approve'
+          : '/api/reject'
+
+        const response = await fetch(
+          endpoint,
+          { method: 'POST' },
+        )
+
+        const data = await response.json()
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+            'Could not resolve approval.',
+          )
+        }
+
+        document
+          .getElementById('approval')
+          .classList.remove('visible')
+
+        if (approved) {
+          activateStage(4)
+          setStatus(
+            'Approved — WorkPilot is continuing…',
+            'active',
+          )
+        } else {
+          setStatus(
+            'Rejected — workflow stopped.',
+            'error',
+          )
+        }
+      } catch (error) {
+        showError(error)
+      }
+    }
+
+    function showError(error) {
+      clearInterval(timer)
+
+      document
+        .getElementById('error')
+        .classList.add('visible')
+
+      document.getElementById(
+        'error',
+      ).textContent =
+        error instanceof Error
+          ? error.message
+          : String(error)
+
+      document
+        .getElementById('launch')
+        .removeAttribute('disabled')
+
+      setStatus(
+        'Something went wrong',
+        'error',
+      )
+    }
+
+    refreshStatus()
+  </script>
+</body>
+</html>
