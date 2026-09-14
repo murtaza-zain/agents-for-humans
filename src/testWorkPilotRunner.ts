@@ -1,3 +1,6 @@
+import readline from 'node:readline/promises'
+import { stdin as input, stdout as output } from 'node:process'
+
 import { runWorkPilot } from './agent/workpilotRunner.js'
 
 const goal = `
@@ -27,8 +30,38 @@ console.log('\n========================================')
 console.log('        WORKPILOT END-TO-END TEST')
 console.log('========================================\n')
 
+const rl = readline.createInterface({
+  input,
+  output,
+})
+
 try {
-  const result = await runWorkPilot(goal)
+  const result = await runWorkPilot(goal, {
+    approvalHandler: async (request) => {
+      console.log('\n========================================')
+      console.log('        HUMAN APPROVAL REQUIRED')
+      console.log('========================================\n')
+
+      console.log('REASON:')
+      console.log(request.reason)
+
+      console.log('\nCONTEXT:')
+      console.log(request.context)
+
+      console.log('\nRECOMMENDATION:')
+      console.log(request.recommendation)
+
+      console.log('\nOPTIONS:')
+      console.log('1 = Approve and continue')
+      console.log('2 = Reject and stop')
+
+      const answer = await rl.question(
+        '\nEnter 1 to approve or 2 to reject: ',
+      )
+
+      return answer.trim() === '1'
+    },
+  })
 
   console.log('\n========================================')
   console.log('              PLAN')
@@ -36,6 +69,14 @@ try {
 
   console.log(
     JSON.stringify(result.plan, null, 2),
+  )
+
+  console.log('\n========================================')
+  console.log('             APPROVALS')
+  console.log('========================================\n')
+
+  console.log(
+    JSON.stringify(result.approvals, null, 2),
   )
 
   console.log('\n========================================')
@@ -57,7 +98,7 @@ try {
   )
 
   console.log('\n========================================')
-  console.log('           FINAL REPORT')
+  console.log('             FINAL REPORT')
   console.log('========================================\n')
 
   console.log(result.finalReport)
@@ -65,8 +106,8 @@ try {
   console.error('\n========================================')
   console.error('              RUN FAILED')
   console.error('========================================\n')
-
   console.error(error)
-
   process.exitCode = 1
+} finally {
+  rl.close()
 }

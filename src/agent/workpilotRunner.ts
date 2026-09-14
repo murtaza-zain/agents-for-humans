@@ -1,22 +1,40 @@
 import { createWorkPlan, type WorkPlan } from './planner.js'
+
 import {
   convertPlanToTasks,
   createExecutionState,
   getNextExecutableTask,
   type ExecutionState,
 } from './executor.js'
+
 import { runWorkPilotJob } from '../agent.js'
+
 import {
   createAgentEvent,
   type AgentEvent,
 } from '../events/agentEvents.js'
-import type { Task } from '../types/workflow.js'
+
+import type {
+  ApprovalRequest,
+  Task,
+} from '../types/workflow.js'
+
+export interface WorkPilotApprovalRequest extends ApprovalRequest {}
+
+export type WorkPilotApprovalHandler = (
+  request: WorkPilotApprovalRequest,
+) => Promise<boolean>
+
+export interface WorkPilotRunOptions {
+  approvalHandler?: WorkPilotApprovalHandler
+}
 
 export interface WorkPilotRunResult {
   goal: string
   plan: WorkPlan
   executionState: ExecutionState
   events: AgentEvent[]
+  approvals: ApprovalRequest[]
   finalReport: string
   quality: {
     passed: boolean
@@ -70,84 +88,79 @@ function extractText(result: unknown): string {
 }
 
 function classifyTask(task: Task) {
-  const text = `${task.title} ${task.description}`.toLowerCase();
+  const text = `${task.title} ${task.description}`.toLowerCase()
 
-  // Check scope BEFORE research.
-  // A scope task can contain words like "research criteria",
-  // "research framework", or "research requirements".
   if (
-    text.includes("scope") ||
-    text.includes("scope definition") ||
-    text.includes("criteria") ||
-    text.includes("objective") ||
-    text.includes("framework") ||
-    text.includes("blueprint") ||
-    text.includes("requirements")
+    text.includes('scope') ||
+    text.includes('scope definition') ||
+    text.includes('criteria') ||
+    text.includes('objective') ||
+    text.includes('framework') ||
+    text.includes('blueprint') ||
+    text.includes('requirements')
   ) {
     return {
-      phase: "scope" as const,
-    };
-  }
-
-  // Quality before generic research/evidence words.
-  if (
-    text.includes("quality") ||
-    text.includes("quality-check") ||
-    text.includes("quality check") ||
-    text.includes("finalize") ||
-    text.includes("verify") ||
-    text.includes("validation")
-  ) {
-    return {
-      phase: "quality" as const,
-    };
-  }
-
-  // Synthesis before generic analysis words.
-  if (
-    text.includes("decision-ready") ||
-    text.includes("decision ready") ||
-    text.includes("build the decision") ||
-    text.includes("draft") ||
-    text.includes("synthesis") ||
-    text.includes("final brief")
-  ) {
-    return {
-      phase: "synthesis" as const,
-    };
+      phase: 'scope' as const,
+    }
   }
 
   if (
-    text.includes("analysis") ||
-    text.includes("analyse") ||
-    text.includes("analyze") ||
-    text.includes("tradeoff") ||
-    text.includes("trade-off") ||
-    text.includes("matrix") ||
-    text.includes("swot") ||
-    text.includes("compare")
+    text.includes('quality') ||
+    text.includes('quality-check') ||
+    text.includes('quality check') ||
+    text.includes('finalize') ||
+    text.includes('verify') ||
+    text.includes('validation')
   ) {
     return {
-      phase: "analysis" as const,
-    };
+      phase: 'quality' as const,
+    }
   }
 
   if (
-    text.includes("research") ||
-    text.includes("collect") ||
-    text.includes("evidence") ||
-    text.includes("source") ||
-    text.includes("pricing") ||
-    text.includes("data")
+    text.includes('decision-ready') ||
+    text.includes('decision ready') ||
+    text.includes('build the decision') ||
+    text.includes('draft') ||
+    text.includes('synthesis') ||
+    text.includes('final brief')
   ) {
     return {
-      phase: "research" as const,
-    };
+      phase: 'synthesis' as const,
+    }
+  }
+
+  if (
+    text.includes('analysis') ||
+    text.includes('analyse') ||
+    text.includes('analyze') ||
+    text.includes('tradeoff') ||
+    text.includes('trade-off') ||
+    text.includes('matrix') ||
+    text.includes('swot') ||
+    text.includes('compare')
+  ) {
+    return {
+      phase: 'analysis' as const,
+    }
+  }
+
+  if (
+    text.includes('research') ||
+    text.includes('collect') ||
+    text.includes('evidence') ||
+    text.includes('source') ||
+    text.includes('pricing') ||
+    text.includes('data')
+  ) {
+    return {
+      phase: 'research' as const,
+    }
   }
 
   return {
-    phase: "quality" as const,
-  };
+    phase: 'quality' as const,
+  }
 }
 
 function createTaskPrompt(
@@ -167,7 +180,8 @@ Earlier workflow results:
 ${previousOutputs
   .map(
     (output, index) =>
-      `--- Workflow result ${index + 1} ---\n${output}`,
+      `--- Workflow result ${index + 1} ---
+${output}`,
   )
   .join('\n\n')}
 `
@@ -251,6 +265,7 @@ Review the accumulated research, analysis, and draft.
 Produce the final decision-ready answer.
 
 Check that:
+
 - the requested competitors are covered
 - pricing is clearly described
 - features are covered
@@ -269,36 +284,51 @@ Return the FINAL REPORT only.
 You are WorkPilot, an autonomous professional workflow agent.
 
 Core principle:
+
 "Give AI the job, not the prompt."
 
 ORIGINAL USER GOAL
+
 ==================
+
 ${goal}
 
 CURRENT WORKFLOW TASK
+
 =====================
+
 ${task.title}
 
 TASK DESCRIPTION
+
 ================
+
 ${task.description}
 
 EXPECTED OUTPUT
+
 ===============
+
 ${planTask.expectedOutput}
 
 CURRENT PHASE
+
 =============
+
 ${classification.phase}
 
 ${previousContext}
 
 PHASE INSTRUCTIONS
+
 ==================
+
 ${phaseInstructions}
 
 GENERAL RULES
+
 =============
+
 - Perform the task, do not explain how a human could do it.
 - Preserve useful findings from earlier workflow stages.
 - Do not invent facts.
@@ -385,10 +415,66 @@ function evaluateQuality(report: string): {
   }
 }
 
+function buildApprovalRequest(
+  goal: string,
+  analysisOutput: string,
+): ApprovalRequest {
+  const uncertaintyMatches = [
+    ...analysisOutput.matchAll(
+      /uncertain|unresolved|unknown|not disclosed|custom pricing|regional|pricing varies|requires.*sales/gi,
+    ),
+  ]
+
+  const uncertaintyCount = Math.min(
+    new Set(
+      uncertaintyMatches.map((match) =>
+        match[0].toLowerCase(),
+      ),
+    ).size,
+    5,
+  )
+
+  return {
+    id: crypto.randomUUID(),
+    reason:
+      'Human approval required before WorkPilot converts the research and analysis into the final decision-ready recommendation.',
+    context: [
+      `The workflow has completed research and comparative analysis for the requested job.`,
+      `The analysis contains ${uncertaintyCount} distinct uncertainty signal(s).`,
+      '',
+      'Analysis excerpt:',
+      analysisOutput.slice(0, 4000),
+    ].join('\n'),
+    recommendation:
+      'Proceed with the evidence currently available, explicitly preserving unresolved pricing and source uncertainties in the final report.',
+    options: [
+      'Approve and continue to synthesis',
+      'Reject and stop the workflow',
+    ],
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+  }
+}
+
+async function requestHumanApproval(
+  request: WorkPilotApprovalRequest,
+  handler?: WorkPilotApprovalHandler,
+): Promise<boolean> {
+  if (!handler) {
+    throw new Error(
+      'WorkPilot reached a human approval gate, but no approvalHandler was provided.',
+    )
+  }
+
+  return handler(request)
+}
+
 export async function runWorkPilot(
   goal: string,
+  options: WorkPilotRunOptions = {},
 ): Promise<WorkPilotRunResult> {
   const events: AgentEvent[] = []
+  const approvals: ApprovalRequest[] = []
 
   events.push(
     createAgentEvent(
@@ -411,6 +497,7 @@ export async function runWorkPilot(
   const previousOutputs: string[] = []
 
   let safetyCounter = 0
+  let approvalRequested = false
 
   while (
     executionState.completedTaskIds.length < tasks.length &&
@@ -440,6 +527,79 @@ export async function runWorkPilot(
     }
 
     const classification = classifyTask(nextTask)
+
+    if (
+      !approvalRequested &&
+      classification.phase === 'synthesis' &&
+      executionState.completedTaskIds.length > 0
+    ) {
+      const analysisOutput =
+        previousOutputs[previousOutputs.length - 1] ?? ''
+
+      const approvalRequest = buildApprovalRequest(
+        goal,
+        analysisOutput,
+      )
+
+      approvals.push(approvalRequest)
+
+      events.push(
+        createAgentEvent(
+          'approval_requested',
+          'WorkPilot paused before synthesis and requested human approval.',
+          {
+            status: 'warning',
+          },
+        ),
+      )
+
+      const approved = await requestHumanApproval(
+        approvalRequest,
+        options.approvalHandler,
+      )
+
+      approvalRequest.status = approved
+        ? 'approved'
+        : 'rejected'
+
+      approvalRequest.resolvedAt =
+        new Date().toISOString()
+
+      events.push(
+        createAgentEvent(
+          'approval_received',
+          approved
+            ? 'Human approved the workflow to continue to synthesis.'
+            : 'Human rejected the workflow at the approval gate.',
+          {
+            status: approved
+              ? 'success'
+              : 'warning',
+          },
+        ),
+      )
+
+      approvalRequested = true
+
+      if (!approved) {
+        nextTask.status = 'blocked'
+        executionState.currentTaskId = undefined
+
+        events.push(
+          createAgentEvent(
+            'job_failed',
+            'WorkPilot stopped because human approval was rejected.',
+            {
+              status: 'warning',
+            },
+          ),
+        )
+
+        throw new Error(
+          'WorkPilot stopped at the human approval gate.',
+        )
+      }
+    }
 
     nextTask.status = 'in_progress'
     nextTask.attempts += 1
@@ -575,6 +735,7 @@ export async function runWorkPilot(
     plan,
     executionState,
     events,
+    approvals,
     finalReport,
     quality,
   }
