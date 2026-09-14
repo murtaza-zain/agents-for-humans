@@ -43,7 +43,7 @@ function extractText(result: unknown): string {
       lastMessage &&
       Array.isArray(lastMessage.content)
     ) {
-      return lastMessage.content
+      const textBlocks = lastMessage.content
         .map((block) => {
           if (typeof block === 'string') {
             return block
@@ -60,12 +60,78 @@ function extractText(result: unknown): string {
 
           return ''
         })
-        .join('\n')
-        .trim()
+        .filter(Boolean)
+
+      return textBlocks.join('\n').trim()
     }
   }
 
   return String(result)
+}
+
+function classifyTask(task: Task): {
+  phase:
+    | 'scope'
+    | 'research'
+    | 'analysis'
+    | 'synthesis'
+    | 'quality'
+  useResearchTools: boolean
+} {
+  const text = `${task.title} ${task.description}`.toLowerCase()
+
+  if (
+    text.includes('scope') ||
+    text.includes('blueprint')
+  ) {
+    return {
+      phase: 'scope',
+      useResearchTools: true,
+    }
+  }
+
+  if (
+    text.includes('research') ||
+    text.includes('collect') ||
+    text.includes('data') ||
+    text.includes('source') ||
+    text.includes('pricing')
+  ) {
+    return {
+      phase: 'research',
+      useResearchTools: true,
+    }
+  }
+
+  if (
+    text.includes('analysis') ||
+    text.includes('matrix') ||
+    text.includes('swot') ||
+    text.includes('compare')
+  ) {
+    return {
+      phase: 'analysis',
+      useResearchTools: false,
+    }
+  }
+
+  if (
+    text.includes('draft') ||
+    text.includes('brief') ||
+    text.includes('synthesis') ||
+    text.includes('narrative') ||
+    text.includes('summary')
+  ) {
+    return {
+      phase: 'synthesis',
+      useResearchTools: false,
+    }
+  }
+
+  return {
+    phase: 'quality',
+    useResearchTools: false,
+  }
 }
 
 function createTaskPrompt(
@@ -74,49 +140,159 @@ function createTaskPrompt(
   planTask: WorkPlan['tasks'][number],
   previousOutputs: string[],
 ): string {
+  const classification = classifyTask(task)
+
   const previousContext =
     previousOutputs.length === 0
-      ? 'No earlier task output is available.'
+      ? 'No earlier workflow results are available.'
       : `
-Earlier task outputs:
+Earlier workflow results:
 
 ${previousOutputs
   .map(
     (output, index) =>
-      `--- Previous task ${index + 1} ---\n${output}`,
+      `--- Workflow result ${index + 1} ---\n${output}`,
   )
   .join('\n\n')}
 `
 
-  return `
-You are executing one stage of a WorkPilot professional workflow.
+  let phaseInstructions = ''
 
-ORIGINAL USER GOAL:
+  switch (classification.phase) {
+    case 'scope':
+      phaseInstructions = `
+You are performing the workflow's scope stage.
+
+Define the exact information required to answer the user's
+goal and establish a useful research framework.
+
+You may use web research to identify the primary sources
+that should be used in later stages.
+
+Do NOT write the final competitive report yet.
+`
+      break
+
+    case 'research':
+      phaseInstructions = `
+You are performing the workflow's research stage.
+
+Use search_web and fetch_source whenever useful.
+
+Collect factual information from real sources.
+
+Prefer official and primary sources.
+
+Record actual source URLs.
+
+Do not invent prices, capabilities, customers, or claims.
+
+Focus on building an evidence base that later stages can
+use.
+`
+      break
+
+    case 'analysis':
+      phaseInstructions = `
+You are performing the workflow's analysis stage.
+
+Use the research results already provided.
+
+Compare the evidence.
+
+Identify patterns, differences, strengths, weaknesses,
+tradeoffs, and uncertainties.
+
+Do NOT invent information that is absent from the research.
+
+Do not write the polished final report yet.
+`
+      break
+
+    case 'synthesis':
+      phaseInstructions = `
+You are performing the workflow's synthesis stage.
+
+Use the research and analysis already completed.
+
+Produce a decision-ready draft.
+
+Include actual source URLs where evidence was used.
+
+Never create fake citation markers such as [1], [2],
+【4†L1-L12】, or invented line references.
+
+Do not claim certainty where the evidence is uncertain.
+`
+      break
+
+    case 'quality':
+      phaseInstructions = `
+You are performing the workflow's final quality stage.
+
+Review the accumulated research, analysis, and draft.
+
+Produce the final decision-ready answer.
+
+Check that:
+- the requested competitors are covered
+- pricing is clearly described
+- features are covered
+- strengths and weaknesses are covered
+- important uncertainties are stated
+- real source URLs are included
+- unsupported claims are removed
+- recommendations are tied to evidence
+
+Return the FINAL REPORT only.
+`
+      break
+  }
+
+  return `
+You are WorkPilot, an autonomous professional workflow agent.
+
+Core principle:
+"Give AI the job, not the prompt."
+
+ORIGINAL USER GOAL
+==================
 ${goal}
 
-CURRENT TASK:
+CURRENT WORKFLOW TASK
+=====================
 ${task.title}
 
-TASK DESCRIPTION:
+TASK DESCRIPTION
+================
 ${task.description}
 
-EXPECTED OUTPUT:
+EXPECTED OUTPUT
+===============
 ${planTask.expectedOutput}
+
+CURRENT PHASE
+=============
+${classification.phase}
 
 ${previousContext}
 
-Instructions:
+PHASE INSTRUCTIONS
+==================
+${phaseInstructions}
 
-1. Perform the current task rather than explaining how a human could perform it.
-2. Use available tools when research or external evidence is required.
-3. Preserve useful information from previous stages.
-4. Do not invent facts.
-5. Clearly mark uncertainty.
-6. Return a concise but useful result that can be passed to the next workflow stage.
-7. When this task requires research, prefer official or primary sources.
-8. Include source URLs in your result when sources were used.
+GENERAL RULES
+=============
+- Perform the task, do not explain how a human could do it.
+- Preserve useful findings from earlier workflow stages.
+- Do not invent facts.
+- Mark uncertainty explicitly.
+- Prefer primary sources.
+- Include real URLs when sources are used.
+- Do not fabricate citation syntax.
+- Keep the result focused and useful for the next workflow stage.
 
-Complete the current task now.
+Complete this workflow stage now.
 `
 }
 
@@ -127,60 +303,67 @@ function evaluateQuality(report: string): {
 } {
   const normalized = report.toLowerCase()
 
-  const requiredSignals = [
-    'stripe',
-    'adyen',
-    'paddle',
-    'pricing',
-    'features',
-    'strength',
-    'weakness',
-    'source',
+  const checks = [
+    {
+      name: 'Stripe coverage',
+      passed: normalized.includes('stripe'),
+    },
+    {
+      name: 'Adyen coverage',
+      passed: normalized.includes('adyen'),
+    },
+    {
+      name: 'Paddle coverage',
+      passed: normalized.includes('paddle'),
+    },
+    {
+      name: 'Pricing coverage',
+      passed: normalized.includes('pricing'),
+    },
+    {
+      name: 'Feature coverage',
+      passed:
+        normalized.includes('feature') ||
+        normalized.includes('product'),
+    },
+    {
+      name: 'Strength analysis',
+      passed: normalized.includes('strength'),
+    },
+    {
+      name: 'Weakness analysis',
+      passed: normalized.includes('weakness'),
+    },
+    {
+      name: 'Source evidence',
+      passed:
+        normalized.includes('http://') ||
+        normalized.includes('https://') ||
+        normalized.includes('source'),
+    },
+    {
+      name: 'Recommendation',
+      passed:
+        normalized.includes('recommend') ||
+        normalized.includes('best fit') ||
+        normalized.includes('best for'),
+    },
   ]
 
-  const present = requiredSignals.filter((signal) =>
-    normalized.includes(signal),
+  const passedChecks = checks.filter(
+    (check) => check.passed,
   )
 
-  const issues: string[] = []
-
-  if (!normalized.includes('stripe')) {
-    issues.push('Stripe is missing from the final report.')
-  }
-
-  if (!normalized.includes('adyen')) {
-    issues.push('Adyen is missing from the final report.')
-  }
-
-  if (!normalized.includes('paddle')) {
-    issues.push('Paddle is missing from the final report.')
-  }
-
-  if (!normalized.includes('pricing')) {
-    issues.push('Pricing analysis is missing.')
-  }
-
-  if (
-    !normalized.includes('source') &&
-    !normalized.includes('http')
-  ) {
-    issues.push('No visible source information was detected.')
-  }
-
-  if (!normalized.includes('weakness')) {
-    issues.push('Weakness analysis is missing.')
-  }
-
-  if (!normalized.includes('strength')) {
-    issues.push('Strength analysis is missing.')
-  }
+  const issues = checks
+    .filter((check) => !check.passed)
+    .map((check) => `${check.name} is missing.`)
 
   const score = Math.round(
-    (present.length / requiredSignals.length) * 100,
+    (passedChecks.length / checks.length) * 100,
   )
 
   return {
-    passed: score >= 75,
+    passed: score >= 80,
     score,
     issues,
   }
@@ -209,14 +392,12 @@ export async function runWorkPilot(
 
   const tasks = convertPlanToTasks(plan)
   const executionState = createExecutionState()
-
   const previousOutputs: string[] = []
 
   let safetyCounter = 0
 
   while (
-    executionState.completedTaskIds.length <
-      tasks.length &&
+    executionState.completedTaskIds.length < tasks.length &&
     safetyCounter < tasks.length + 2
   ) {
     safetyCounter += 1
@@ -242,6 +423,8 @@ export async function runWorkPilot(
       )
     }
 
+    const classification = classifyTask(nextTask)
+
     nextTask.status = 'in_progress'
     nextTask.attempts += 1
     executionState.currentTaskId = nextTask.id
@@ -249,14 +432,12 @@ export async function runWorkPilot(
     events.push(
       createAgentEvent(
         'task_started',
-        `Started task: ${nextTask.title}`,
+        `Started task: ${nextTask.title} (${classification.phase})`,
         {
           taskId: nextTask.id,
         },
       ),
     )
-
-    let taskResult: string
 
     try {
       const result = await runWorkPilotJob(
@@ -268,7 +449,7 @@ export async function runWorkPilot(
         ),
       )
 
-      taskResult = extractText(result)
+      const taskResult = extractText(result)
 
       if (!taskResult.trim()) {
         throw new Error(
@@ -281,6 +462,7 @@ export async function runWorkPilot(
       nextTask.updatedAt = new Date().toISOString()
 
       previousOutputs.push(taskResult)
+
       executionState.completedTaskIds.push(
         nextTask.id,
       )
@@ -324,16 +506,15 @@ export async function runWorkPilot(
     executionState.currentTaskId = undefined
   }
 
+  const finalReport =
+    previousOutputs[previousOutputs.length - 1] ?? ''
+
   events.push(
     createAgentEvent(
       'quality_started',
       'WorkPilot quality check started.',
     ),
   )
-
-  const finalReport =
-    previousOutputs[previousOutputs.length - 1] ??
-    ''
 
   const quality = evaluateQuality(finalReport)
 

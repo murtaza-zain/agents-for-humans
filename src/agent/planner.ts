@@ -13,200 +13,253 @@ const taskSchema = z.object({
 const workPlanSchema = z.object({
   goal: z.string(),
   summary: z.string(),
-  tasks: z.array(taskSchema).min(1),
+  tasks: z.array(taskSchema).length(5),
 })
 
 export type WorkPlan = z.infer<typeof workPlanSchema>
 
 const planner = new Agent({
   name: 'WorkPilot Planner',
-  description: 'Creates execution plans for professional workflows.',
+  description:
+    'Creates a compact five-stage workflow plan for a professional job.',
   model: workpilotModel,
   systemPrompt: `
 You are the WorkPilot planning engine.
 
-Turn the user's job into exactly five sequential execution tasks.
+Your ONLY job is to design a five-stage workflow.
 
-You may respond in concise Markdown.
-Do not provide a long project proposal.
-Do not invent unrelated management details.
-Focus only on the five tasks required to accomplish the user's requested outcome.
+Do NOT write the final answer to the user's job.
 
-For each task include:
-1. Task title
-2. What needs to be done
-3. Expected output
+Do NOT perform the research.
 
-Use this simple format:
+Do NOT write the competitive report.
 
-1. TASK TITLE
-Description: ...
-Output: ...
+Return ONLY a compact planning table using exactly this format:
 
-2. TASK TITLE
-Description: ...
-Output: ...
+| # | Task | What needs to be done | Expected output |
+|---|------|------------------------|-----------------|
+| 1 | ... | ... | ... |
+| 2 | ... | ... | ... |
+| 3 | ... | ... | ... |
+| 4 | ... | ... | ... |
+| 5 | ... | ... | ... |
 
-Continue through task 5.
+Rules:
+- Exactly five rows.
+- Each row represents one workflow stage.
+- Keep titles under 12 words.
+- Keep descriptions under 40 words.
+- Keep expected outputs under 25 words.
+- Do not include owners.
+- Do not include timelines.
+- Do not include RACI.
+- Do not include SWOT unless it is genuinely needed for the user's goal.
+- Do not write an executive report.
+- Do not provide a source list.
+- Do not provide recommendations.
+- Do not produce anything outside the table.
 `,
 })
 
-function normalizeTaskText(text: string): WorkPlan['tasks'] {
-  const tasks: WorkPlan['tasks'] = []
+function extractText(result: unknown): string {
+  if (
+    result &&
+    typeof result === 'object' &&
+    'lastMessage' in result
+  ) {
+    const lastMessage = (
+      result as {
+        lastMessage?: {
+          content?: unknown
+        }
+      }
+    ).lastMessage
 
-  // First try the simple numbered format we requested.
-  const blocks = text
-    .split(/\n(?=\s*\d+\.\s)/)
-    .map((block) => block.trim())
-    .filter(Boolean)
+    if (
+      lastMessage &&
+      Array.isArray(lastMessage.content)
+    ) {
+      return lastMessage.content
+        .map((block) => {
+          if (typeof block === 'string') {
+            return block
+          }
 
-  for (const block of blocks) {
-    const match = block.match(
-      /^(\d+)\.\s*(.+?)(?:\n|$)([\s\S]*)$/u,
-    )
+          if (
+            block &&
+            typeof block === 'object' &&
+            'text' in block &&
+            typeof block.text === 'string'
+          ) {
+            return block.text
+          }
 
-    if (!match) continue
-
-    const number = match[1]
-    const remainder = match[3] ?? ''
-
-    const title = match[2]
-      .replace(/\*\*/g, '')
-      .replace(/^#+\s*/, '')
-      .trim()
-
-    const descriptionMatch = remainder.match(
-      /Description:\s*([\s\S]*?)(?=\n\s*Output:|\n*$)/i,
-    )
-
-    const outputMatch = remainder.match(
-      /Output:\s*([\s\S]*)$/i,
-    )
-
-    const description = (
-      descriptionMatch?.[1] ??
-      remainder
-    )
-      .replace(/\|/g, ' ')
-      .replace(/\*\*/g, '')
-      .replace(/<br\s*\/?>/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-
-    const expectedOutput = (
-      outputMatch?.[1] ??
-      'Completed task result'
-    )
-      .replace(/\|/g, ' ')
-      .replace(/\*\*/g, '')
-      .replace(/<br\s*\/?>/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-
-    if (title) {
-      tasks.push({
-        id: `task-${number}`,
-        title,
-        description: description || `Execute ${title}.`,
-        dependencies:
-          number === '1'
-            ? []
-            : [`task-${Number(number) - 1}`],
-        expectedOutput,
-      })
+          return ''
+        })
+        .join('\n')
+        .trim()
     }
   }
 
-  // Fallback for GPT-OSS Markdown-table output.
-  if (tasks.length < 5) {
-    tasks.length = 0
-
-    const tableLines = text
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => /^\|\s*\d+\s*\|/.test(line))
-
-    for (const line of tableLines) {
-      const cells = line
-        .split('|')
-        .map((cell) =>
-          cell
-            .replace(/\*\*/g, '')
-            .replace(/<br\s*\/?>/gi, ' ')
-            .replace(/\s+/g, ' ')
-            .trim(),
-        )
-        .filter(Boolean)
-
-      // Expected:
-      // number | title | activities | owner | output
-      if (cells.length < 5) continue
-
-      const number = cells[0]
-      const title = cells[1]
-      const expectedOutput = cells[2]
-      const description = cells[3]
-
-      if (!/^\d+$/.test(number)) continue
-
-      tasks.push({
-        id: `task-${number}`,
-        title,
-        description,
-        dependencies:
-          number === '1'
-            ? []
-            : [`task-${Number(number) - 1}`],
-        expectedOutput,
-      })
-    }
-  }
-
-  return tasks.slice(0, 5)
+  return String(result)
 }
 
-export async function createWorkPlan(goal: string): Promise<WorkPlan> {
-  const result = await planner.invoke(`
-Create a five-task execution plan for:
+function extractPlanningTable(
+  text: string,
+): Array<{
+  number: string
+  title: string
+  description: string
+  expectedOutput: string
+}> {
+  const lines = text.split('\n')
 
-${goal}
-`)
+  const rows: Array<{
+    number: string
+    title: string
+    description: string
+    expectedOutput: string
+  }> = []
 
-  const rawText = result.lastMessage?.content
-    ?.map((block) => {
-      if (typeof block === 'string') {
-        return block
-      }
+  for (const line of lines) {
+    const trimmed = line.trim()
 
-      if (
-        block &&
-        typeof block === 'object' &&
-        'text' in block &&
-        typeof block.text === 'string'
-      ) {
-        return block.text
-      }
+    if (!/^\|\s*\d+\s*\|/.test(trimmed)) {
+      continue
+    }
 
-      return ''
+    const cells = trimmed
+      .split('|')
+      .map((cell) =>
+        cell
+          .replace(/\*\*/g, '')
+          .replace(/<br\s*\/?>/gi, ' ')
+          .replace(/\s+/g, ' ')
+          .trim(),
+      )
+      .filter(Boolean)
+
+    if (cells.length < 4) {
+      continue
+    }
+
+    const number = cells[0]
+
+    if (!/^[1-5]$/.test(number)) {
+      continue
+    }
+
+    rows.push({
+      number,
+      title: cells[1],
+      description: cells[2],
+      expectedOutput: cells[3],
     })
-    .join('')
-
-  if (!rawText) {
-    throw new Error('Planner returned no text output.')
   }
 
-  const tasks = normalizeTaskText(rawText)
+  return rows.slice(0, 5)
+}
 
-  if (tasks.length !== 5) {
-    throw new Error(
-      `Planner did not produce exactly 5 usable tasks.\n\nRaw output:\n${rawText}`,
-    )
-  }
+function createDeterministicFallback(
+  goal: string,
+): WorkPlan {
+  const researchGoal = goal.trim()
 
   return workPlanSchema.parse({
+    goal: researchGoal,
+    summary:
+      'Five-stage professional research and decision workflow.',
+    tasks: [
+      {
+        id: 'task-1',
+        title: 'Define scope and research criteria',
+        description:
+          'Clarify the desired decision, comparison criteria, evidence requirements, and important uncertainties.',
+        dependencies: [],
+        expectedOutput:
+          'A clear research scope and evaluation framework.',
+      },
+      {
+        id: 'task-2',
+        title: 'Collect and validate evidence',
+        description:
+          'Research authoritative sources and gather current evidence relevant to the user’s requested outcome.',
+        dependencies: ['task-1'],
+        expectedOutput:
+          'A validated evidence base with source URLs.',
+      },
+      {
+        id: 'task-3',
+        title: 'Analyse findings and tradeoffs',
+        description:
+          'Compare the evidence, identify differences, strengths, weaknesses, risks, and meaningful uncertainties.',
+        dependencies: ['task-2'],
+        expectedOutput:
+          'A comparative analysis with key findings and tradeoffs.',
+      },
+      {
+        id: 'task-4',
+        title: 'Build the decision-ready draft',
+        description:
+          'Turn the validated analysis into a concise draft tailored to the user’s decision and requested output.',
+        dependencies: ['task-3'],
+        expectedOutput:
+          'A decision-ready draft with evidence and recommendations.',
+      },
+      {
+        id: 'task-5',
+        title: 'Quality-check and finalize',
+        description:
+          'Verify completeness, evidence quality, uncertainty, source traceability, and alignment with the original goal.',
+        dependencies: ['task-4'],
+        expectedOutput:
+          'A verified final answer ready for the user.',
+      },
+    ],
+  })
+}
+
+export async function createWorkPlan(
+  goal: string,
+): Promise<WorkPlan> {
+  const result = await planner.invoke(`
+Create the five-stage workflow for this job:
+
+${goal}
+
+Remember:
+- planning only
+- exactly five rows
+- table only
+- no final answer
+`)
+
+  const rawText = extractText(result)
+  const rows = extractPlanningTable(rawText)
+
+  if (rows.length !== 5) {
+    return createDeterministicFallback(goal)
+  }
+
+  const plan = workPlanSchema.safeParse({
     goal,
     summary:
-      `WorkPilot execution plan containing ${tasks.length} sequential tasks.`,
-    tasks,
+      'Five-stage workflow generated by WorkPilot.',
+    tasks: rows.map((row, index) => ({
+      id: `task-${index + 1}`,
+      title: row.title,
+      description: row.description,
+      dependencies:
+        index === 0
+          ? []
+          : [`task-${index}`],
+      expectedOutput: row.expectedOutput,
+    })),
   })
+
+  if (!plan.success) {
+    return createDeterministicFallback(goal)
+  }
+
+  return plan.data
 }
