@@ -69,69 +69,85 @@ function extractText(result: unknown): string {
   return String(result)
 }
 
-function classifyTask(task: Task): {
-  phase:
-    | 'scope'
-    | 'research'
-    | 'analysis'
-    | 'synthesis'
-    | 'quality'
-  useResearchTools: boolean
-} {
-  const text = `${task.title} ${task.description}`.toLowerCase()
+function classifyTask(task: Task) {
+  const text = `${task.title} ${task.description}`.toLowerCase();
 
+  // Check scope BEFORE research.
+  // A scope task can contain words like "research criteria",
+  // "research framework", or "research requirements".
   if (
-    text.includes('scope') ||
-    text.includes('blueprint')
+    text.includes("scope") ||
+    text.includes("scope definition") ||
+    text.includes("criteria") ||
+    text.includes("objective") ||
+    text.includes("framework") ||
+    text.includes("blueprint") ||
+    text.includes("requirements")
   ) {
     return {
-      phase: 'scope',
-      useResearchTools: true,
-    }
+      phase: "scope" as const,
+    };
+  }
+
+  // Quality before generic research/evidence words.
+  if (
+    text.includes("quality") ||
+    text.includes("quality-check") ||
+    text.includes("quality check") ||
+    text.includes("finalize") ||
+    text.includes("verify") ||
+    text.includes("validation")
+  ) {
+    return {
+      phase: "quality" as const,
+    };
+  }
+
+  // Synthesis before generic analysis words.
+  if (
+    text.includes("decision-ready") ||
+    text.includes("decision ready") ||
+    text.includes("build the decision") ||
+    text.includes("draft") ||
+    text.includes("synthesis") ||
+    text.includes("final brief")
+  ) {
+    return {
+      phase: "synthesis" as const,
+    };
   }
 
   if (
-    text.includes('research') ||
-    text.includes('collect') ||
-    text.includes('data') ||
-    text.includes('source') ||
-    text.includes('pricing')
+    text.includes("analysis") ||
+    text.includes("analyse") ||
+    text.includes("analyze") ||
+    text.includes("tradeoff") ||
+    text.includes("trade-off") ||
+    text.includes("matrix") ||
+    text.includes("swot") ||
+    text.includes("compare")
   ) {
     return {
-      phase: 'research',
-      useResearchTools: true,
-    }
+      phase: "analysis" as const,
+    };
   }
 
   if (
-    text.includes('analysis') ||
-    text.includes('matrix') ||
-    text.includes('swot') ||
-    text.includes('compare')
+    text.includes("research") ||
+    text.includes("collect") ||
+    text.includes("evidence") ||
+    text.includes("source") ||
+    text.includes("pricing") ||
+    text.includes("data")
   ) {
     return {
-      phase: 'analysis',
-      useResearchTools: false,
-    }
-  }
-
-  if (
-    text.includes('draft') ||
-    text.includes('brief') ||
-    text.includes('synthesis') ||
-    text.includes('narrative') ||
-    text.includes('summary')
-  ) {
-    return {
-      phase: 'synthesis',
-      useResearchTools: false,
-    }
+      phase: "research" as const,
+    };
   }
 
   return {
-    phase: 'quality',
-    useResearchTools: false,
-  }
+    phase: "quality" as const,
+  };
 }
 
 function createTaskPrompt(
