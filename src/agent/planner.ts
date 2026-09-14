@@ -144,8 +144,8 @@ function normalizeTaskText(text: string): WorkPlan['tasks'] {
 
       const number = cells[0]
       const title = cells[1]
-      const description = cells[2]
-      const expectedOutput = cells[3]
+      const expectedOutput = cells[2]
+      const description = cells[3]
 
       if (!/^\d+$/.test(number)) continue
 
